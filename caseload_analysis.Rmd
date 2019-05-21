@@ -1,0 +1,527 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+library(mdcpsde2)
+library(magrittr)
+library(feather)
+library(lubridate)
+library(Cairo)
+library(readxl)
+library(dplyr)
+library(readxl)
+library(odbc)
+library(stringr)
+library(xlsx)
+
+
+oldw <- getOption("warn")
+options(warn = -1)
+con <- dbConnect(odbc::odbc(), .connection_string = "Driver={SQL Server};Server=10.160.96.35;\nDatabase=EDW;\nUID=fcsadmin;\nPWD=Welcome1;\nPort=1433;")
+
+#change this date of the data
+analysis_date <- as.Date("2019-04-30")
+ark_date <- as.Date(analysis_date %m+% days(1))
+                    
+analysis_date_string <- format(analysis_date, '%Y%m%d')
+caseload_dir <- paste(format(analysis_date,'%Y%m%d'),'caseload_analysis',sep = '_')
+
+save_files <- function(data, date1,date2,date3, filename, sub_dir = NA){
+  dir.create(sub_dir, showWarnings = F)
+  
+  file_path <- if(!is.na(sub_dir)){
+    paste(
+      sub_dir,
+      paste(
+        format(date1, '%Y%m%d'),
+        format(date2, '%Y%m%d'),
+        format(date3, '%Y%m%d'),
+        filename,
+        sep = '_'
+      ),
+      sep = '/'
+    )
+  } else {
+    paste(
+      format(date1, '%Y%m%d'),
+      format(date2, '%Y%m%d'),
+      format(date3, '%Y%m%d'),
+      filename,
+      sep = '_'
+    )
+  }
+  
+  readr::write_csv(data, paste0(file_path, '.csv'))
+  return(data)
+}
+
+
+
+ar1_details <- read_xlsx(choose.files())
+ar3_details <- read_xlsx(choose.files())
+
+# siu_workloads <- read_xlsx(choose.files())
+
+ar1_source_string <- paste(analysis_date, ark_date, Sys.Date(), "AR1K_Detail.xlsx", sep = "_")
+ar3_source_string <- paste(analysis_date, ark_date, Sys.Date(), "AR3k_Detail.xlsx", sep = "_")
+siu_source_string <- paste(analysis_date, ark_date, Sys.Date(), "SIU_Workload.xlsx", sep = "_")
+
+eastwestsouth <-data.frame(
+  "EastWestSouth" = c('East','East','East','East','East','East','East','East','East','East','East','East','East',
+                      'East','East','East','East','East','East','East','East','East','East','East','East','East',
+                      'East','East','East','East','East','East','East','East','East','East','East','East','East',
+                      'East','East',
+                      'South','South','South','South','South','South','South','South','South','South',
+                      'West','West','West','West','West','West','West','West','West','West','West','West','West',
+                      'West','West','West','West','West','West','West','West','West','West','West','West','West',
+                      'West','West','West','West','West','West','West','SIU'),
+"region"= c('I-N','I-N','I-N','I-N','I-N','I-N','I-S',
+'I-S','I-S','I-S','I-S','I-S','II-E','II-E','II-E','II-E','II-E','II-E','II-E','II-E','IV-N','IV-N','IV-N','IV-N',
+'IV-N','IV-N','IV-N','IV-N','IV-N','IV-N','IV-N','IV-S','IV-S','IV-S','IV-S','IV-S','IV-S','IV-S','IV-S',
+'IV-S','IV-S','VI','VI','VI','VI','VII-C','VII-E','VII-E','VII-E','VII-W','VII-W','II-W','II-W','II-W','II-W',
+'II-W','II-W','II-W','II-W','II-W','II-W','II-W','II-W','III-N','III-N','III-N','III-S','V-E','V-E','V-E',
+'V-E','V-E','V-E','V-E','V-E','V-W','V-W','V-W','V-W','V-W','V-W','V-W','V-W','V-W','SIU'),
+"county"= c('Alcorn','Benton','Marshall','Prentiss','Tippah','Tishomingo','Itawamba','Lafayette','Lee',
+'Monroe','Pontotoc','Union','DeSoto','Grenada','Panola','Quitman','Tallahatchie','Tate','Tunica','Yalobusha','Attala',
+'Calhoun','Choctaw','Clay','EastChickasaw','Lowndes','Noxubee','Oktibbeha','Webster','WestChickasaw','Winston',
+'Clarke','Jasper','Jones','Kemper','Lauderdale','Leake','Neshoba','Newton','Scott','Wayne','Forrest','Lamar',
+'Perry','Stone','Harrison','George','Greene','Jackson','Hancock','PearlRiver',
+'Carroll','Coahoma','EastBolivar','Holmes','Humphreys','Issaquena','Leflore','Montgomery','Sharkey','Sunflower','Washington',
+'WestBolivar','Madison','Rankin','Yazoo','Hinds','Copiah','Covington','JeffersonDavis','Lawrence','Lincoln','Marion',
+'Simpson','Smith','Adams','Amite','Claiborne','Franklin','Jefferson','Pike','Walthall','Warren','Wilkinson',''
+)
+)
+
+```
+
+
+```{sql custody_child_snapshot, connection=con, include=FALSE, output.var="custody_snapshot"}
+select Region
+	,County
+	,[ASWS Name]
+	,[Worker Name]
+	,fccc.[Case ID]
+	,[Child ID]
+	,[Child Name]
+	,(CONVERT(int,CONVERT(char(8),GETDATE(),112))-CONVERT(char(8),PERS_DOB,112))/10000 as 'Age'
+	,PERS_GENDER as 'Gender'
+	,PERS_ETHNICITY as 'Ethnicity'
+	,Race
+	,[Case Start]
+	,[Custody Start]
+	,[Court Tracking Number]
+	,DATEDIFF(DD, [Custody Start], GETDATE()) as 'Days in Custody'
+	,PLAC_STATUS as 'Placement Status'
+	,PLAC_RQ_START_DT as 'Placement Start'
+	,DATEDIFF(DD, PLAC_RQ_START_DT, GETDATE()) as 'Days in Placement'
+	,ISNULL(rtrim(RESD_RESOURCE_NAME), RTRIM(fac.CODE_SHORT_DESC)) as 'Resource Name'
+	,RTRIM(fac.CODE_SHORT_DESC) as 'Facility Type'
+	,[Perm Plan]
+	,PERM_START_DATE as 'Perm Plan Start'
+	,isnull([COS County], County) as 'COS County'
+	,[COS Worker Name]
+from (select * from fod_child_case_crosswalk where [Child Type] = 'Custody') fccc
+inner join MW_PERS pers on PERS_PERS_ID = [Child ID]
+left join MW_PLACEMENT on PLAC_STATUS in ('A')	and PLAC_PERS_ID = [Child ID]
+left join MW_CODE_TABLE fac on CODE_TABLE_NAME = 'EXPCODE' and CODE_TABLE_VALUE = PLAC_FACILITY_TYPE
+left join MW_RESRC_DIR on PLAC_RESOURCE_ID = RESD_RESOURCE_ID
+left join (
+	select PERM_PERS_ID
+		,RTRIM(CODE_SHORT_DESC) as 'Perm Plan'
+		,PERM_START_DATE
+		,ROW_NUMBER() over (
+			partition by PERM_PERS_ID
+			order by PERM_TIMESTAMP desc
+		) 'DESC'
+	from MW_PERM_PLAN
+		,MW_CODE_TABLE
+	where PERM_STATUS = 'A'
+		and PERM_PLAN_TYPE = '100'
+		and CODE_TABLE_NAME = 'PLANNAME'
+		and CODE_TABLE_VALUE = PERM_PLAN_CODE
+) perm
+ on  perm.[DESC] = 1
+	and PERM_PERS_ID = [Child ID]
+left join (
+	select CASW_CASE_ID as 'Case ID'
+		,RTRIM(COUN_CO_NAME) as 'COS County'
+		,RTRIM(WORK_LAST_NAME) + ', ' + RTRIM(WORK_FIRST_NAME) as 'COS Worker Name'
+		,ROW_NUMBER() over (
+			partition by CASW_CASE_ID
+			order by CASW_START_DATE desc, CASW_TIMESTAMP desc
+		) 'DESC'
+	from MW_CASE_WORKER
+		,MW_PIN_REL
+		,MW_MASTER_PIN
+		,MW_CO
+		,MW_WORKER
+	where CASW_COUNTY_TYPE = 'COS'
+		and CASW_STATUS = 'A'
+		and CASW_WORKER_ID = PIN_WORKER_ID
+		and PIN_STATUS = 'C'
+		and PIN_MASTER_PIN_ID = MPIN_PIN_ID
+		and MPIN_UNIT_TITLE_CD = '0012'
+		and COUN_CO = CASW_COUNTY
+		and WORK_WORKER_ID = CASW_WORKER_ID
+) cosw
+on cosw.[Case ID] = fccc.[Case ID]
+	and cosw.[DESC] = 1
+left join (
+	select ISN
+		,STUFF(
+			COALESCE(', ' + [1], '') +
+			COALESCE(', ' + [2], '') +
+			COALESCE(', ' + [3], '') +
+			COALESCE(', ' + [4], '') +
+			COALESCE(', ' + [5], '') +
+			COALESCE(', ' + [6], '') +
+			COALESCE(', ' + [7], '') +
+			COALESCE(', ' + [8], '') +
+			COALESCE(', ' + [9], '') +
+			COALESCE(', ' + [10], ''),
+			1, 2, ''
+		) 'Race'
+	from (
+		select ISN
+			,PERS_RACE
+			,ROW_NUMBER() over (
+				partition by ISN
+				order by PERS_RACE
+			) 'SEQ'
+		from MW_PERS_RACE
+	) q
+	pivot(
+		max(PERS_RACE)
+		for SEQ in ([1], [2], [3], [4], [5], [6], [7], [8], [9], [10])
+	) piv
+) prace on prace.ISN = pers.ISN
+```
+
+```{r ar1_processing, include=FALSE}
+
+ark1_variables <- ar1_details %>% 
+  group_by(serv_category, person_id) %>%
+  distinct(serv_category, case_id, person_id, .keep_all = TRUE) %>%
+  mutate(SourceFile = ar1_source_string,
+          Version = ark_date,
+         Created = Sys.Date(),
+         WorkerType = case_when(TRUE ~"Frontline"),
+                       WorkerLevel = case_when(
+                         worker_title %in% c("Area Social Work Supv", "Regional Director", "Social Serv Regional Dir","Bureau Director") ~ "Supervisor",
+                       TRUE ~ "Non-Supervisor")
+                      ,
+                       catalyst_desc_rev = case_when(
+                         serv_category == "ICPC INCOMING" ~ "In-Home ICPC",
+                         serv_category == "IN-HOME CASE COR" ~ "In-Home COR",
+                         serv_category == "IN-HOME CASE COS" ~ "In-Home COS",
+                         serv_category == "IN-HOME CASE R&S" ~ "In-Home R&S",
+                         serv_category == "INVESTIGATION LEVEL 2" ~ "CP",
+                         serv_category == "INVESTIGATION LEVEL 3" ~ "CP",
+                         serv_category == "PLACEMENT COR" ~ "Ongoing COR",
+                         serv_category == "PLACEMENT COS" ~ "Ongoing COS",
+                         serv_category == "PLACEMENT R&S" ~ "Ongoing R&S",
+                         serv_category == "PROTECTIVE SERVICES COR" ~ "In-Home COR",
+                         serv_category == "PROTECTIVE SERVICES COS" ~ "In-Home COS",
+                         serv_category == "PROTECTIVE SERVICES R&S" ~ "In-Home R&S",
+                         TRUE ~ "Unknown"
+                       ),
+                       standard_casetype = case_when(
+                         catalyst_desc_rev == "In-Home ICPC" ~ 17,
+                         catalyst_desc_rev == "In-Home COR" ~ 34,
+                         catalyst_desc_rev == "In-Home COS" ~ 34,
+                         catalyst_desc_rev == "In-Home R&S" ~ 17,
+                         catalyst_desc_rev == "CP" ~ 14,
+                         catalyst_desc_rev == "Ongoing COR" ~ 28,
+                         catalyst_desc_rev == "Ongoing COS" ~ 28,
+                         catalyst_desc_rev == "Ongoing R&S" ~ 14,
+                         TRUE ~ 0
+                        ),
+                       weight_percase = case_when(
+                         catalyst_desc_rev == "In-Home ICPC" ~ .0588,
+                         catalyst_desc_rev == "In-Home COR" ~ .0294,
+                         catalyst_desc_rev == "In-Home COS" ~ .0294,
+                         catalyst_desc_rev == "In-Home R&S" ~ .0588,
+                         catalyst_desc_rev == "CP" ~ .0714,
+                         catalyst_desc_rev == "Ongoing COR" ~ .0357,
+                         catalyst_desc_rev == "Ongoing COS" ~ .0357,
+                         catalyst_desc_rev == "Ongoing R&S" ~ .0714
+                        )
+                     )
+
+
+
+```
+
+```{r ar3_processing, inlcude=FALSE}
+ar3_variables1 <- ar3_details %>%
+  rename(region = Region,
+         worker_county = County,
+         supervisor = Supervisor,
+         worker = Worker,
+         worker_id = Worker_ID,
+         worker_mw_id = Worker_MW_ID,
+         serv_category_old = Serv_Category,
+         catalyst_desc = Catalyst_Desc,
+         case_id = Case_ID,
+         serv_category = Serv_Type,
+         weights = Weight,
+         person_name = Case_Name,
+         worker_title = Worker_Title) %>%
+   mutate(SourceFile = ar3_source_string,
+           Version = ark_date,
+         Created = Sys.Date(),
+          WorkerType = case_when(TRUE ~"Adoption & L."),
+          WorkerLevel = case_when(
+                         worker_title %in% c("Area Social Work Supv", "Regional Director", "Social Serv Regional Dir","Bureau Director") ~ "Supervisor",
+                       TRUE ~ "Non-Supervisor"),
+          catalyst_desc_rev = case_when(
+                         serv_category == "Adoption COS" ~ "Adopt COS",
+                         serv_category == "Resource Inquiry" ~ "Resource Inq",
+                         serv_category == "Resource Home Study" ~ "Home Study",
+                         serv_category == "Resource Home Supervision" ~ "Home Superv",
+                         serv_category == "Resource_Renew" ~ "Home Renewal",
+                         serv_category == "ICPC Application" ~ "ICPC APPL",
+                         TRUE ~ "Unknown"
+                       ),
+                       standard_casetype = case_when(
+                         catalyst_desc_rev == "Adopt COS" ~ 15,
+                         catalyst_desc_rev == "Resource Inq" ~ 15,
+                         catalyst_desc_rev == "Home Study" ~ 15,
+                         catalyst_desc_rev == "Home Superv" ~ 36,
+                         catalyst_desc_rev == "Home Renewal" ~ 36,
+                         catalyst_desc_rev == "ICPC APPL" ~ 15,
+                         TRUE ~ 0
+                        ),
+                       weight_percase = case_when(
+                         catalyst_desc_rev == "Adopt COS" ~ .0667,
+                         catalyst_desc_rev == "Resource Inq" ~ .0667,
+                         catalyst_desc_rev == "Home Study" ~ .0667,
+                         catalyst_desc_rev == "Home Superv" ~ .0278,
+                         catalyst_desc_rev == "Home Renewal" ~ .0278,
+                         catalyst_desc_rev == "ICPC APPL" ~ .0667,
+                         TRUE ~ 0 
+                        )
+                     )
+```
+
+```{sql siu_workload, connection=con, output.vars=siu_workloads}
+
+select DISTINCT
+  [Data Date],
+	Region,
+	County,
+	[ASWS Name],
+	[ASWS ID],
+	asws.WORK_PIN as 'ASWS PIN',
+	[Worker Name],
+	[Worker ID],
+	work.WORK_PIN as 'Worker PIN',
+	[Service Type],
+	[Case ID],
+	[Intake Date],
+	[Intake HH ID],
+	case
+		when [Intake HH Name] is not NULL then [Intake HH Name]
+		when [Case First Name] is NULL then [Case Last Name]
+		else RTRIM([Case Last Name]) + ', ' + RTRIM([Case First Name])
+	end as 'Case Name',
+	Weights as 'Case Weight'
+
+from (
+	SELECT GETDATE() as 'Data Date',
+		rtrim(region) as 'Region',
+		rtrim(county) as 'County',
+		rtrim(rtrim(sup_last) +', '+rtrim(sup_first)+' '+isnull(rtrim(sup_middle),'')) 'ASWS Name',
+		sup_id as 'ASWS ID',
+		rtrim(rtrim(work_last) +', '+rtrim(work_first)+' '+isnull(rtrim(work_middle),'')) 'Worker Name',
+		work_id as 'Worker ID',
+		Upper(unit_title) as 'Unit Title',
+		Upper(serv_type) as 'Service Type',
+		Upper(case_id) as 'Case ID',
+		Upper(case_last) as 'Case Last Name',
+		Upper(case_first) as 'Case First Name',
+		Upper(intake_dt) as 'Intake Date',
+		Upper(intake_hh_id) as 'Intake HH ID',
+		Upper(intake_hh_name) as 'Intake HH Name',
+		Upper(weights) as 'Weights'
+	from  AR3K_OUTPUT
+	where UPPER(unit_title) = 'SIU'
+) query
+left join MW_WORKER asws on [ASWS ID] = asws.WORK_WORKER_ID
+left join MW_WORKER work on [Worker ID] = work.WORK_WORKER_ID
+
+```
+
+```{r siu_processing, include=FALSE}
+
+siu_variables <- siu_workloads %>%
+  filter(County != "NULL") %>%
+  rename(region = Region,
+         worker_county = County,
+         supervisor = `ASWS Name`,
+         worker = `Worker Name`,
+         worker_pin = `Worker PIN`,
+         serv_category = `Service Type`,
+         case_id = `Case ID`,
+         person_name = `Case Name`,
+         weights = `Case Weight`,
+         worker_id = `Worker ID`) %>%
+  mutate(SourceFile = siu_source_string,
+         Version = ark_date,
+         Created = Sys.Date(),
+         region = "SIU",
+         case_id = as.character(case_id),
+         worker_title = "Family Protection Spec. Adv",
+         worker_id = as.character(worker_id),
+         WorkerType = "SIU Worker",
+         WorkerLevel = case_when(
+                         worker_title %in% c("Area Social Work Supv", "Regional Director", "Social Serv Regional Dir","Bureau Director") ~ "Supervisor",
+                       TRUE ~ "Non-Supervisor"),
+           catalyst_desc_rev = case_when(
+                         serv_category == "ICPC INCOMING" ~ "In-Home ICPC",
+                         serv_category == "IN-HOME CASE COR" ~ "In-Home COR",
+                         serv_category == "IN-HOME CASE_COS" ~ "In-Home COS",
+                         serv_category == "IN-HOME CASE R&S" ~ "In-Home R&S",
+                         serv_category == "INVESTIGATION LEVEL 2" ~ "CP",
+                         serv_category == "INVESTIGATION LEVEL 3" ~ "CP",
+                         serv_category == "PLACEMENT COR" ~ "Ongoing COR",
+                         serv_category == "PLACEMENT COS" ~ "Ongoing COS",
+                         serv_category == "PLACEMENT R&S" ~ "Ongoing R&S",
+                         serv_category == "PROTECTIVE SERVICES COR" ~ "In-Home COR",
+                         serv_category == "PROTECTIVE SERVICES COS" ~ "In-Home COS",
+                         serv_category == "PROTECTIVE SERVICES R&S" ~ "In-Home R&S",
+                         TRUE ~ "Unknown"
+                       ),
+                       standard_casetype = case_when(
+                         catalyst_desc_rev == "In-Home ICPC" ~ 17,
+                         catalyst_desc_rev == "In-Home COR" ~ 34,
+                         catalyst_desc_rev == "In-Home COS" ~ 34,
+                         catalyst_desc_rev == "In-Home R&S" ~ 17,
+                         catalyst_desc_rev == "CP" ~ 14,
+                         catalyst_desc_rev == "Ongoing COR" ~ 28,
+                         catalyst_desc_rev == "Ongoing COS" ~ 28,
+                         catalyst_desc_rev == "Ongoing R&S" ~ 14,
+                         TRUE ~ 0
+                        ),
+                       weight_percase = case_when(
+                         catalyst_desc_rev == "In-Home ICPC" ~ .0588,
+                         catalyst_desc_rev == "In-Home COR" ~ .0294,
+                         catalyst_desc_rev == "In-Home COS" ~ .0294,
+                         catalyst_desc_rev == "In-Home R&S" ~ .0588,
+                         catalyst_desc_rev == "CP" ~ .0714,
+                         catalyst_desc_rev == "Ongoing COR" ~ .0357,
+                         catalyst_desc_rev == "Ongoing COS" ~ .0357,
+                         catalyst_desc_rev == "Ongoing R&S" ~ .0714
+                        )
+                        )
+
+```
+
+```{r combine_workload_files, include=FALSE}
+workload <- bind_rows(ark1_variables, ar3_variables1, siu_variables) %>%
+  left_join((eastwestsouth %>% select(EastWestSouth, region) %>% distinct(region, .keep_all = TRUE)), by = "region")
+workload$weight_percasetype <- ave(workload$weight_percase,workload$worker_id,workload$catalyst_desc_rev, FUN = sum)
+workload$weight_caseload_orig <- ave(workload$weight_percase,workload$worker_id, FUN = sum)
+workload$catalyst_desc_rev <- as.factor(workload$catalyst_desc_rev)
+
+workload2 <- workload %>%
+  mutate(
+    weight_caseload = case_when(
+      weight_caseload_orig > 1.0000 & weight_caseload_orig < 1.001 ~ 1.000,
+      weight_caseload_orig > 2.0000 & weight_caseload_orig < 2.001 ~ 2.000,
+      weight_caseload_orig > 3.0000 & weight_caseload_orig < 3.001 ~ 3.000,
+      TRUE ~ weight_caseload_orig
+    ),
+    Status_orig = case_when(
+      weight_caseload_orig <= 1.0000 ~ "Met",
+      weight_caseload_orig > 1.0000 & weight_caseload_orig <= 1.2000 ~ "Close",
+      weight_caseload_orig > 1.2000 & weight_caseload_orig <= 2.0000 ~ "Over 1",
+      weight_caseload_orig > 2.0000 & weight_caseload_orig <= 3.0000 ~ "Over 2",
+      weight_caseload_orig > 3.0000 ~ "Over 3",
+      TRUE ~ "Check"),
+    Status = case_when(
+      weight_caseload <= 1.0000 ~ "Met",
+      weight_caseload > 1.0000 & weight_caseload <= 1.2000 ~ "Close",
+      weight_caseload > 1.2000 & weight_caseload <= 2.0000 ~ "Over 1",
+      weight_caseload > 2.0000 & weight_caseload <= 3.0000 ~ "Over 2",
+      weight_caseload > 3.0000 ~ "Over 3",
+      TRUE ~ "Check"),
+    dif_status = case_when(
+      Status_orig == Status ~ "",
+      TRUE ~ "Yes"),
+    Period = analysis_date,
+    dummy = 1,
+    Period_String = format(analysis_date, "%B %d %Y"),
+         weight_percase = round(weight_percase,4),
+         weight_percasetype = round(weight_percasetype,4),
+         weight_caseload_orig = round(weight_caseload_orig,4),
+         weight_caseload = round(weight_caseload,4)
+    )
+  
+workload2$Count_CasesByType <- ave(workload2$dummy, workload2$catalyst_desc_rev, FUN = sum)
+workload2$Count_CasesByCounty <- ave(workload2$dummy, workload2$worker_county, FUN = sum)
+workload2$Count_CasesByWorker <- ave(workload2$dummy, workload2$worker_id, FUN = sum)
+workload2$Count_CasesByWorkerAndType <- ave(workload2$dummy, workload2$worker_id, workload2$catalyst_desc, FUN = sum)
+workload2$Flag_UniqueRegion <- case_when(
+  duplicated(workload2$region) == FALSE ~ 1,
+  TRUE ~ 0)
+workload2$Flag_UniqueCounty <- case_when(
+  duplicated(workload2$worker_county) == FALSE ~ 1,
+  TRUE ~ 0)
+workload2$Flag_UniqueWorker <- case_when(
+  duplicated(workload2$worker_id) == FALSE ~ 1,
+  TRUE ~ 0)
+
+workload_final <- workload2 %>%
+  ungroup() %>%
+  select(worker_county,supervisor,worker,worker_id,worker_title,serv_category,catalyst_desc,case_id,person_name,
+         SourceFile,Version,Created,Period,EastWestSouth,region,WorkerType,WorkerLevel,catalyst_desc_rev,standard_casetype,
+         weight_percase,weight_percasetype,weight_caseload_orig,weight_caseload,Status_orig,Status,dif_status,Count_CasesByType,
+         Count_CasesByCounty,Count_CasesByWorker,Count_CasesByWorkerAndType,Flag_UniqueRegion,Flag_UniqueCounty,Flag_UniqueWorker
+) %>% 
+save_files( analysis_date, ark_date, Sys.Date(), 'caseloads', caseload_dir)  
+
+siu_workloads %>% save_files(analysis_date, ark_date, Sys.Date(), 'siu_workload', caseload_dir)
+ar1_details %>% save_files(analysis_date, ark_date, Sys.Date(), 'ar1K_details', caseload_dir)
+ar3_details %>% save_files(analysis_date, ark_date, Sys.Date(), 'ar3k_details', caseload_dir)
+custody_snapshot %>% save_files(analysis_date, ark_date, Sys.Date(), 'custody_snapshot', caseload_dir)
+
+maxN <- function(x, N=2){
+  len <- length(x)
+  if(N>len){
+    warning('N greater than length(x).  Setting N=length(x)')
+    N <- length(x)
+  }
+  sort(x,partial=len-N+1)[len-N+1]
+}
+
+
+workload_cumu <- workload2 %>%
+  mutate(altspelling = "",
+         job = "",
+         Status2 = case_when(Status == "Met" ~ "Met",
+                             Status == "Close" ~ "Close",
+                             Status %in% c("Over 1", "Over 2", "Over 3") ~ "Over",
+                             TRUE ~ "No"),
+         Period_max = Period, 
+         Period_Range = (as.Date("2018-11-15")),
+         Keep = 1,
+         Period_min = as.Date("2018-01-02"),
+         Period_First = "",
+         Period_Last = Period,
+         Period_2ndToLast_date_est = as.Date("2018-12-15"),
+         Period_2ndToLast = "",
+         PeriodStatus = "Last"
+         ) %>%
+  select(worker_county, cor_county, supervisor, worker,worker_id, worker_mw_id, worker_pin, worker_title, serv_category, catalyst_desc, case_id, case_type, case_hh_name, person_id, person_name, member_type, fsp_type, fsp_status, Placement_Start_date, Custody_Start_date, Facility_Name, Resource_Name, SourceFile, Version, Created, Period, EastWestSouth, region, altspelling, WorkerType, WorkerLevel, catalyst_desc_rev, standard_casetype, weight_percase, weight_percasetype, weight_caseload_orig, weight_caseload, Status_orig, Status, dif_status, Supervisor_ID, job, Count_CasesByType, Count_CasesByCounty, Count_CasesByWorker, Count_CasesByWorkerAndType, Flag_UniqueRegion, Flag_UniqueCounty, Flag_UniqueWorker, Period_String, Status2, Period_max, Period_Range, Keep, Period_min, Period_First, Period_Last, Period_2ndToLast_date_est, Period_2ndToLast, PeriodStatus) %>%  save_files(analysis_date, ark_date, Sys.Date(), 'caseloads_cumulative', caseload_dir)
+
+
+```
+
+```
+
+
